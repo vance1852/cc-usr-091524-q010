@@ -28,6 +28,7 @@ public class DataSeeder implements CommandLineRunner {
     private final InspectionTemplateItemRepository itemRepo;
     private final InspectionPlanRepository planRepo;
     private final InspectionPlanPointRepository planPointRepo;
+    private final TrendRuleRepository trendRuleRepo;
 
     @Value("${app.admin-username}")
     private String adminUsername;
@@ -40,7 +41,8 @@ public class DataSeeder implements CommandLineRunner {
                       InspectionTemplateRepository templateRepo,
                       InspectionTemplateItemRepository itemRepo,
                       InspectionPlanRepository planRepo,
-                      InspectionPlanPointRepository planPointRepo) {
+                      InspectionPlanPointRepository planPointRepo,
+                      TrendRuleRepository trendRuleRepo) {
         this.userRepo = userRepo;
         this.equipmentRepo = equipmentRepo;
         this.workOrderRepo = workOrderRepo;
@@ -49,6 +51,7 @@ public class DataSeeder implements CommandLineRunner {
         this.itemRepo = itemRepo;
         this.planRepo = planRepo;
         this.planPointRepo = planPointRepo;
+        this.trendRuleRepo = trendRuleRepo;
     }
 
     @Override
@@ -59,6 +62,7 @@ public class DataSeeder implements CommandLineRunner {
         List<InspectionPoint> points = seedInspectionPoints(equips);
         List<InspectionTemplate> templates = seedTemplates();
         seedPlans(points, templates);
+        seedTrendRules(templates);
         System.out.println("种子数据初始化完成");
     }
 
@@ -266,6 +270,37 @@ public class DataSeeder implements CommandLineRunner {
             planPointRepo.save(newPlanPoint(plan4.getId(), p.getId(), seq++));
         }
         System.out.println("已初始化巡检计划种子数据 (4个计划)");
+    }
+
+    /** 演示用趋势预警规则：电机定子温度缓慢上升（单次合格但连日逼近上限） */
+    private void seedTrendRules(List<InspectionTemplate> templates) {
+        if (trendRuleRepo.count() > 0) return;
+        InspectionTemplate motorTpl = findTpl(templates, "TPL-MOTOR-01");
+        if (motorTpl == null) return;
+        InspectionTemplateItem statorTemp = null;
+        for (InspectionTemplateItem item : itemRepo.findByTemplateIdOrderBySortOrderAsc(motorTpl.getId())) {
+            if ("定子温度(℃)".equals(item.getName())) {
+                statorTemp = item;
+                break;
+            }
+        }
+        if (statorTemp == null) return;
+        TrendRule rule = new TrendRule();
+        rule.setName("电机定子温度缓慢上升趋势预警");
+        rule.setEquipmentType("motor");
+        rule.setTemplateItemId(statorTemp.getId());
+        rule.setItemName(statorTemp.getName());
+        rule.setWindowHours(168);
+        rule.setMinSamples(3);
+        rule.setSlopeThreshold(1.5);
+        rule.setAmplitudeThreshold(15.0);
+        rule.setNearBoundMargin(5.0);
+        rule.setNearBoundLimit(3);
+        rule.setLevel("high");
+        rule.setCooldownHours(24);
+        rule.setCreatedBy("system");
+        trendRuleRepo.save(rule);
+        System.out.println("已初始化趋势预警规则种子数据 (1条)");
     }
 
     private Equipment newEquip(String code, String name, String location, String type, String status) {

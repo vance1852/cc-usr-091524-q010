@@ -9,6 +9,7 @@ import com.admin.equipment.repo.inspection.*;
 import com.admin.equipment.service.inspection.InspectionTemplateService.JudgeResult;
 import com.admin.equipment.service.inspection.RoutePlanningService.RoutePoint;
 import com.admin.equipment.service.inspection.RoutePlanningService.RouteResult;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +32,7 @@ public class InspectionTaskService {
     private final WorkOrderRepository workOrderRepo;
     private final InspectionTemplateService templateService;
     private final InspectionPlanService planService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public InspectionTaskService(InspectionTaskRepository taskRepo,
                                  InspectionTaskPointRepository taskPointRepo,
@@ -43,7 +45,8 @@ public class InspectionTaskService {
                                  EquipmentRepository equipmentRepo,
                                  WorkOrderRepository workOrderRepo,
                                  InspectionTemplateService templateService,
-                                 InspectionPlanService planService) {
+                                 InspectionPlanService planService,
+                                 ApplicationEventPublisher eventPublisher) {
         this.taskRepo = taskRepo;
         this.taskPointRepo = taskPointRepo;
         this.recordRepo = recordRepo;
@@ -56,6 +59,7 @@ public class InspectionTaskService {
         this.workOrderRepo = workOrderRepo;
         this.templateService = templateService;
         this.planService = planService;
+        this.eventPublisher = eventPublisher;
     }
 
     public List<InspectionTask> listAll() {
@@ -195,7 +199,12 @@ public class InspectionTaskService {
         return taskRepo.save(task);
     }
 
-    public record PointItemSpec(Long templateItemId, String checkValue, Double checkNumeric, String remark) {}
+    /**
+     * @param recordedAt 采样时间，可空（默认写入时间）；补录迟到数据时传入实际采样时刻，
+     *                   趋势评估会按采样时间重算受影响窗口
+     */
+    public record PointItemSpec(Long templateItemId, String checkValue, Double checkNumeric, String remark,
+                                LocalDateTime recordedAt) {}
 
     @Transactional
     public PointExecuteResult executePoint(Long taskId, Long taskPointId, String inspectorName,
@@ -252,7 +261,7 @@ public class InspectionTaskService {
                 rec.setIsQualified(jr.qualified());
                 rec.setIsAbnormal(!jr.qualified());
                 rec.setJudgeDetail(jr.detail());
-                rec.setRecordedAt(now);
+                rec.setRecordedAt(spec.recordedAt() != null ? spec.recordedAt() : now);
                 rec.setRecordedBy(inspectorName == null ? "" : inspectorName);
                 rec.setRemark(spec.remark() == null ? "" : spec.remark());
                 InspectionRecord savedRec = recordRepo.save(rec);
@@ -307,6 +316,13 @@ public class InspectionTaskService {
             task.setActualEnd(now);
         }
         taskRepo.save(task);
+
+        // 事务提交后异步触发趋势规则评估（迟到数据按采样时间重算受影响窗口）
+        if (!savedRecords.isEmpty()) {
+            List<Long> recordIds = new ArrayList<>();
+            for (InspectionRecord r : savedRecords) recordIds.add(r.getId());
+            eventPublisher.publishEvent(new InspectionRecordsSavedEvent(recordIds));
+        }
 
         return new PointExecuteResult(tp, savedRecords, newAbnormalities, createdOrders);
     }
