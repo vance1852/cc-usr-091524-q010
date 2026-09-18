@@ -31,6 +31,7 @@ public class InspectionTaskService {
     private final WorkOrderRepository workOrderRepo;
     private final InspectionTemplateService templateService;
     private final InspectionPlanService planService;
+    private final TrendEvaluationService trendEvaluationService;
 
     public InspectionTaskService(InspectionTaskRepository taskRepo,
                                  InspectionTaskPointRepository taskPointRepo,
@@ -43,7 +44,8 @@ public class InspectionTaskService {
                                  EquipmentRepository equipmentRepo,
                                  WorkOrderRepository workOrderRepo,
                                  InspectionTemplateService templateService,
-                                 InspectionPlanService planService) {
+                                 InspectionPlanService planService,
+                                 TrendEvaluationService trendEvaluationService) {
         this.taskRepo = taskRepo;
         this.taskPointRepo = taskPointRepo;
         this.recordRepo = recordRepo;
@@ -56,6 +58,7 @@ public class InspectionTaskService {
         this.workOrderRepo = workOrderRepo;
         this.templateService = templateService;
         this.planService = planService;
+        this.trendEvaluationService = trendEvaluationService;
     }
 
     public List<InspectionTask> listAll() {
@@ -307,6 +310,9 @@ public class InspectionTaskService {
             task.setActualEnd(now);
         }
         taskRepo.save(task);
+
+        // 趋势预警：事务提交后异步评估命中的规则；迟到数据按采样时间重算受影响窗口
+        trendEvaluationService.scheduleEvaluationForRecords(savedRecords);
 
         return new PointExecuteResult(tp, savedRecords, newAbnormalities, createdOrders);
     }
